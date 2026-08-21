@@ -1,0 +1,772 @@
+import { Button, CheckBox, LineEdit, ScrollView, Slider } from "std-widgets.slint";
+
+export struct LogItem {
+    timestamp: string,
+    level: string,
+    message: string,
+}
+
+export component AppWindow inherits Window {
+    title: "Voicemeeter Auto Restart (VBAR)";
+    icon: @image-url("../assets/icon.png");
+    preferred-width: 860px;
+    preferred-height: 740px;
+    min-width: 640px;
+    min-height: 520px;
+    background: #141218; // M3 Surface Dark
+    default-font-family: "Roboto, 'Segoe UI', -apple-system, sans-serif";
+
+    in-out property <string> language: "en"; // "en" (default) | "pt"
+
+    in-out property <string> process_name: "voicemeeter8x64.exe";
+    in-out property <string> process_path: "C:\\Program Files (x86)\\VB\\Voicemeeter\\voicemeeter8x64.exe";
+    in-out property <bool> path_invalid: false;
+    in-out property <image> process_icon;
+    in-out property <bool> has_process_icon: false;
+
+    in-out property <float> check_interval: 3.0;
+    in-out property <bool> start_minimized: false;
+    in-out property <bool> autostart_with_windows: false;
+    in-out property <bool> crash_protection_enabled: true;
+    in-out property <int> max_consecutive_crashes: 3;
+
+    in-out property <bool> is_monitoring: true;
+    in-out property <string> status_text: "Monitoring active";
+    in-out property <string> target_status: "Process Active (PID: 1234)";
+    in-out property <int> restart_count: 0;
+    in-out property <int> consecutive_crashes: 0;
+    in-out property <bool> crash_alert_active: false;
+    in-out property <string> crash_alert_message: "";
+
+    in property <[LogItem]> logs: [];
+
+    callback toggle_monitoring();
+    callback restart_voicemeeter_now();
+    callback browse_executable_path();
+    callback settings_changed();
+    callback set_language(string);
+    callback reset_crash_alert();
+    callback clear_logs();
+    callback minimize_to_tray();
+
+    VerticalLayout {
+        padding: 18px;
+        spacing: 12px;
+
+        // 1. Material 3 Top App Bar
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 14px;
+                vertical-stretch: 0;
+                
+                // M3 Icon Container
+                Rectangle {
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 14px;
+                    background: #2b2930;
+                    border-width: 1px;
+                    border-color: #49454f;
+                    clip: true;
+                    
+                    if root.has_process_icon : Image {
+                        source: root.process_icon;
+                        width: 36px;
+                        height: 36px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    if !root.has_process_icon : Image {
+                        source: @image-url("../assets/icon.png");
+                        width: 48px;
+                        height: 48px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+
+                    Text {
+                        text: "Voicemeeter Auto Restart";
+                        color: #e6e1e5; // M3 On-Surface
+                        font-size: 20px;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        text: root.language == "pt" ? "Watchdog de Áudio & Diagnóstico de Falhas" : "Audio Watchdog & Crash Diagnostics";
+                        color: #cac4d0; // M3 On-Surface-Variant
+                        font-size: 13px;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+
+                // Language Dropdown Selector Button
+                lang_btn := Rectangle {
+                    width: 105px;
+                    height: 38px;
+                    border-radius: 19px;
+                    background: lang_touch.has-hover ? #36343b : #1d1b20;
+                    border-width: 1px;
+                    border-color: #79747e;
+
+                    lang_touch := TouchArea {
+                        clicked => {
+                            lang_popup.show();
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 6px;
+                        alignment: center;
+
+                        Text {
+                            text: root.language == "pt" ? "🇧🇷 PT" : "🇺🇸 EN";
+                            color: #d0bcff;
+                            font-size: 12px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: "▼";
+                            color: #cac4d0;
+                            font-size: 9px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // M3 Outlined Button (Minimize)
+                Rectangle {
+                    width: 145px;
+                    height: 38px;
+                    border-radius: 19px;
+                    background: tray_touch.has-hover ? #2b2930 : #1d1b20;
+                    border-width: 1px;
+                    border-color: #79747e; // M3 Outline
+
+                    tray_touch := TouchArea {
+                        clicked => {
+                            root.minimize_to_tray();
+                        }
+                    }
+
+                    Text {
+                        text: root.language == "pt" ? "Minimizar Bandeja" : "Minimize to Tray";
+                        color: #d0bcff; // M3 Primary
+                        font-size: 13px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // M3 Filled Button (Restart Now)
+                Rectangle {
+                    width: 145px;
+                    height: 38px;
+                    border-radius: 19px;
+                    background: rst_touch.has-hover ? #b69df8 : #d0bcff; // M3 Primary
+
+                    rst_touch := TouchArea {
+                        clicked => {
+                            root.restart_voicemeeter_now();
+                        }
+                    }
+
+                    Text {
+                        text: root.language == "pt" ? "Reiniciar Agora" : "Restart Now";
+                        color: #381e72; // M3 On-Primary
+                        font-size: 13px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // 2. M3 Error Container Banner (Crash Alert)
+        if root.crash_alert_active : Rectangle {
+            height: 50px;
+            border-radius: 14px;
+            background: #8c1d18; // M3 Error Container
+            border-width: 1px;
+            border-color: #f2b8b5;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+
+                    Rectangle {
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 5px;
+                        background: #f2b8b5;
+                        vertical-stretch: 0;
+                    }
+
+                    Text {
+                        text: root.language == "pt" ? "ALERTA DE FALHA:" : "CRASH ALERT:";
+                        color: #f9dedc;
+                        font-size: 13px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: root.crash_alert_message;
+                        color: #fceeee;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    width: 125px;
+                    height: 30px;
+                    border-radius: 15px;
+                    background: alert_btn.has-hover ? #f9dedc : #ffffff;
+
+                    alert_btn := TouchArea {
+                        clicked => { root.reset_crash_alert(); }
+                    }
+
+                    Text {
+                        text: root.language == "pt" ? "Resetar Alerta" : "Reset Alert";
+                        color: #601410;
+                        font-size: 12px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // 3. M3 Surface Container Cards (Status Dashboard)
+        HorizontalLayout {
+            spacing: 12px;
+            height: 72px;
+
+            // Card 1: Watchdog State
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 14px;
+                background: #211f26; // M3 Surface Container
+                border-width: 1px;
+                border-color: root.is_monitoring ? #4f378b : #49454f;
+
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 12px;
+
+                    Rectangle {
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 5px;
+                        background: root.path_invalid ? #f2b8b5 : (root.is_monitoring ? #80e2a7 : #f5d372);
+                        vertical-stretch: 0;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+
+                        Text {
+                            text: root.language == "pt" ? "ESTADO DO SERVIÇO" : "WATCHDOG SERVICE";
+                            color: #938f99;
+                            font-size: 10px;
+                            font-weight: 700;
+                            letter-spacing: 0.5px;
+                        }
+
+                        Text {
+                            text: root.status_text;
+                            color: root.path_invalid ? #f2b8b5 : (root.is_monitoring ? #80e2a7 : #f5d372);
+                            font-size: 14px;
+                            font-weight: 700;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    Rectangle {
+                        width: 85px;
+                        height: 32px;
+                        border-radius: 16px;
+                        background: mon_toggle.has-hover ? (root.is_monitoring ? #f2b8b5 : #d0bcff) : (root.is_monitoring ? #e29f9c : #b69df8);
+
+                        mon_toggle := TouchArea {
+                            clicked => { root.toggle_monitoring(); }
+                        }
+
+                        Text {
+                            text: root.is_monitoring ? (root.language == "pt" ? "Pausar" : "Pause") : (root.language == "pt" ? "Ativar" : "Resume");
+                            color: root.is_monitoring ? #601410 : #381e72;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Card 2: Process Status
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 14px;
+                background: #211f26;
+                border-width: 1px;
+                border-color: #36343b;
+
+                VerticalLayout {
+                    padding: 12px;
+                    padding-left: 16px;
+                    alignment: center;
+                    spacing: 2px;
+
+                    Text {
+                        text: root.language == "pt" ? "STATUS DO PROCESSO" : "TARGET PROCESS";
+                        color: #938f99;
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: 0.5px;
+                    }
+
+                    Text {
+                        text: root.target_status;
+                        color: root.path_invalid ? #f2b8b5 : #e6e1e5;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+                }
+            }
+
+            // Card 3: Metrics Counter
+            Rectangle {
+                width: 180px;
+                border-radius: 14px;
+                background: #211f26;
+                border-width: 1px;
+                border-color: #36343b;
+
+                VerticalLayout {
+                    padding: 12px;
+                    padding-left: 16px;
+                    alignment: center;
+                    spacing: 2px;
+
+                    Text {
+                        text: root.language == "pt" ? "REINICIALIZAÇÕES" : "RESTART COUNT";
+                        color: #938f99;
+                        font-size: 10px;
+                        font-weight: 700;
+                        letter-spacing: 0.5px;
+                    }
+
+                    Text {
+                        text: root.language == "pt" ? "\{root.restart_count} vezes" : "\{root.restart_count} times";
+                        color: #d0bcff;
+                        font-size: 16px;
+                        font-weight: 700;
+                    }
+                }
+            }
+        }
+
+        // 4. M3 Surface Container High - Live Logs & Diagnostics
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 14px;
+            background: #1d1b20; // M3 Surface Container Low
+            border-width: 1px;
+            border-color: #36343b;
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    height: 28px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        Rectangle {
+                            width: 8px;
+                            height: 16px;
+                            border-radius: 4px;
+                            background: #d0bcff;
+                            vertical-stretch: 0;
+                        }
+
+                        Text {
+                            text: root.language == "pt" ? "Logs de Ocorrências & Diagnósticos" : "Diagnostics & Event Logs";
+                            color: #cac4d0;
+                            font-size: 13px;
+                            font-weight: 600;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 110px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: clear_btn.has-hover ? #36343b : #2b2930;
+                        border-width: 1px;
+                        border-color: #49454f;
+
+                        clear_btn := TouchArea {
+                            clicked => { root.clear_logs(); }
+                        }
+
+                        Text {
+                            text: root.language == "pt" ? "Limpar Logs" : "Clear Logs";
+                            color: #cac4d0;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Log Scroll Area
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: 8px;
+                    background: #141218;
+                    border-width: 1px;
+                    border-color: #2b2930;
+
+                    log_scroll := ScrollView {
+                        viewport-height: root.logs.length * 22px + 12px;
+
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 3px;
+
+                            for item in root.logs: HorizontalLayout {
+                                height: 20px;
+                                spacing: 10px;
+
+                                Text {
+                                    text: item.timestamp;
+                                    color: #79747e;
+                                    font-size: 11px;
+                                    font-family: "'Roboto Mono', Consolas, monospace";
+                                    width: 75px;
+                                }
+
+                                Text {
+                                    text: item.level;
+                                    color: item.level == "ERROR" ? #f2b8b5 :
+                                           item.level == "WARN"  ? #f5d372 :
+                                           item.level == "SUCCESS" ? #80e2a7 : #a8c7fa;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    font-family: "'Roboto Mono', Consolas, monospace";
+                                    width: 65px;
+                                }
+
+                                Text {
+                                    text: item.message;
+                                    color: item.level == "ERROR" ? #f9dedc : #e6e1e5;
+                                    font-size: 11px;
+                                    font-family: "'Roboto Mono', Consolas, monospace";
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. M3 Surface Container (Bottom Settings Panel)
+        Rectangle {
+            border-radius: 14px;
+            background: #211f26;
+            border-width: 1px;
+            border-color: root.path_invalid ? #f2b8b5 : #36343b;
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+
+                Text {
+                    text: root.language == "pt" ? "Configurações de Monitoramento" : "Monitoring Settings";
+                    color: #e6e1e5;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+
+                // Row 1: Executable Path & Browse
+                VerticalLayout {
+                    spacing: 4px;
+
+                    HorizontalLayout {
+                        spacing: 10px;
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 4px;
+
+                            Text {
+                                text: root.language == "pt" ? "Caminho do Executável (.exe):" : "Executable Path (.exe):";
+                                color: root.path_invalid ? #f2b8b5 : #cac4d0;
+                                font-size: 12px;
+                                font-weight: root.path_invalid ? 700 : 500;
+                            }
+
+                            path_input := LineEdit {
+                                text: root.process_path;
+                                placeholder-text: "C:\\Program Files (x86)\\VB\\Voicemeeter\\voicemeeter8x64.exe";
+                                edited => {
+                                    root.process_path = self.text;
+                                    root.settings_changed();
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: end;
+                            width: 110px;
+
+                            Rectangle {
+                                height: 36px;
+                                border-radius: 18px;
+                                background: browse_btn.has-hover ? (root.path_invalid ? #b91c1c : #36343b) : (root.path_invalid ? #8c1d18 : #2b2930);
+                                border-width: 1px;
+                                border-color: root.path_invalid ? #f2b8b5 : #79747e;
+
+                                browse_btn := TouchArea {
+                                    clicked => { root.browse_executable_path(); }
+                                }
+
+                                Text {
+                                    text: root.language == "pt" ? "Procurar..." : "Browse...";
+                                    color: root.path_invalid ? #ffffff : #d0bcff;
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    // Red Alert text when path does not exist on disk
+                    if root.path_invalid : Text {
+                        text: root.language == "pt" ? "⚠️ Executável não encontrado! Clique em 'Procurar...' para selecionar o arquivo .exe do Voicemeeter." : "⚠️ Executable not found! Click 'Browse...' to select the Voicemeeter .exe file.";
+                        color: #f2b8b5;
+                        font-size: 11px;
+                        font-weight: 600;
+                    }
+                }
+
+                // Row 2: Process Name, Interval Slider & Toggles
+                HorizontalLayout {
+                    spacing: 16px;
+
+                    VerticalLayout {
+                        width: 175px;
+                        spacing: 4px;
+
+                        Text {
+                            text: root.language == "pt" ? "Nome do Processo:" : "Process Name:";
+                            color: #cac4d0;
+                            font-size: 12px;
+                            font-weight: 500;
+                        }
+
+                        name_input := LineEdit {
+                            text: root.process_name;
+                            placeholder-text: "voicemeeter8x64.exe";
+                            edited => {
+                                root.process_name = self.text;
+                                root.settings_changed();
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        width: 140px;
+                        spacing: 4px;
+
+                        Text {
+                            text: (root.language == "pt" ? "Intervalo: " : "Interval: ") + (Math.round(root.check_interval * 10) / 10) + "s";
+                            color: #cac4d0;
+                            font-size: 12px;
+                            font-weight: 500;
+                        }
+
+                        Slider {
+                            minimum: 0.1;
+                            maximum: 10.0;
+                            value: root.check_interval;
+                            changed(val) => {
+                                root.check_interval = val;
+                                root.settings_changed();
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+
+                        CheckBox {
+                            text: root.language == "pt" ? "Iniciar com o Windows" : "Start with Windows";
+                            checked: root.autostart_with_windows;
+                            toggled => {
+                                root.autostart_with_windows = self.checked;
+                                root.settings_changed();
+                            }
+                        }
+
+                        CheckBox {
+                            text: root.language == "pt" ? "Iniciar minimizado na bandeja" : "Start minimized to tray";
+                            checked: root.start_minimized;
+                            toggled => {
+                                root.start_minimized = self.checked;
+                                root.settings_changed();
+                            }
+                        }
+
+                        CheckBox {
+                            text: root.language == "pt" ? "Proteção contra Crash Loop" : "Crash Loop Protection";
+                            checked: root.crash_protection_enabled;
+                            toggled => {
+                                root.crash_protection_enabled = self.checked;
+                                root.settings_changed();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Floating Overlay Popup Menu for Language Selection
+    lang_popup := PopupWindow {
+        x: lang_btn.x - 95px;
+        y: lang_btn.y + lang_btn.height + 4px;
+        width: 200px;
+        height: 84px;
+
+        Rectangle {
+            border-radius: 12px;
+            background: #2b2930; // M3 Surface Container High
+            border-width: 1px;
+            border-color: #49454f;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #000000aa;
+
+            VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+
+                // Option 1: English
+                Rectangle {
+                    height: 34px;
+                    border-radius: 8px;
+                    background: opt_en.has-hover ? #36343b : (root.language == "en" ? #3b3844 : #00000000);
+
+                    opt_en := TouchArea {
+                        clicked => {
+                            root.set_language("en");
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 8px;
+                        alignment: space-between;
+
+                        Text {
+                            text: "🇺🇸  English (US)";
+                            color: root.language == "en" ? #d0bcff : #e6e1e5;
+                            font-size: 13px;
+                            font-weight: root.language == "en" ? 700 : 500;
+                            vertical-alignment: center;
+                        }
+
+                        if root.language == "en" : Text {
+                            text: "✓";
+                            color: #d0bcff;
+                            font-size: 13px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Option 2: Português
+                Rectangle {
+                    height: 34px;
+                    border-radius: 8px;
+                    background: opt_pt.has-hover ? #36343b : (root.language == "pt" ? #3b3844 : #00000000);
+
+                    opt_pt := TouchArea {
+                        clicked => {
+                            root.set_language("pt");
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 8px;
+                        alignment: space-between;
+
+                        Text {
+                            text: "🇧🇷  Português (Brasil)";
+                            color: root.language == "pt" ? #d0bcff : #e6e1e5;
+                            font-size: 13px;
+                            font-weight: root.language == "pt" ? 700 : 500;
+                            vertical-alignment: center;
+                        }
+
+                        if root.language == "pt" : Text {
+                            text: "✓";
+                            color: #d0bcff;
+                            font-size: 13px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
